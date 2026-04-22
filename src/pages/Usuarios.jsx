@@ -192,8 +192,16 @@ export default function Usuarios() {
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Setor *</label>
-                <input name="setor" value={form.setor} onChange={handleChange}
-                  className="w-full border rounded px-3 py-2 text-sm" placeholder="Ex: Extrusão" />
+                <select name="setor" value={form.setor} onChange={handleChange}
+                  className="w-full border rounded px-3 py-2 text-sm">
+                  <option value="">Selecione o setor...</option>
+                  <option value="Trançada">Trançada</option>
+                  <option value="Espiralada">Espiralada</option>
+                  <option value="Tricotada">Tricotada</option>
+                  <option value="Flat">Flat</option>
+                  <option value="GN Espiralada">GN Espiralada</option>
+                  <option value="PU GN">PU GN</option>
+                </select>
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Turno *</label>

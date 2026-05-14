@@ -5,6 +5,7 @@ import { BarChart } from "@mui/x-charts/BarChart";
 import { LineChart } from "@mui/x-charts/LineChart";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import MuiTooltip from "@mui/material/Tooltip";
+import HoseBar from "../components/HoseBar";
 
 const API_URL = import.meta.env.VITE_API_URL;
 
@@ -101,18 +102,8 @@ function KpiCard({ titulo, valor, unidade, valorKg, descricao, cor, alerta, badg
         {descricao && !valorKg && <p style={{ fontSize: 11, color: P.textM, margin: "6px 0 0" }}>{descricao}</p>}
         {alerta && <p style={{ fontSize: 11, color: cor, margin: "6px 0 0", fontWeight: 600 }}>{alerta}</p>}
 
-        {meta != null && typeof valor === "number" && (
-          <div style={{ marginTop: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-              <span style={{ fontSize: 10, color: P.textM }}>Meta: {meta}{unidade}</span>
-              <span style={{ fontSize: 10, color: cor }}>{valor}{unidade}</span>
-            </div>
-            <div style={{ height: 4, background: P.border, borderRadius: 4 }}>
-              <div style={{ height: "100%", width: `${Math.min((valor / (meta * 1.5)) * 100, 100)}%`,
-                background: cor, borderRadius: 4, transition: "width 0.6s" }} />
-            </div>
-          </div>
-        )}
+        {/* Substitui a barra simples pela mangueira */}
+        <HoseBar valor={valor} meta={meta} unidade={unidade} cor={cor} />
       </div>
     </MuiTooltip>
   );
@@ -334,12 +325,27 @@ export default function Dashboard() {
     finally { setExportando(false); }
   };
 
-  const top10 = (dados?.top10Produtos || [])
-    .filter(p => p.prodKg > 0)
-    .map(p => ({ ...p, prodKg: Math.max(0, p.prodKg ?? 0) }));
+  const top10 = (dados?.top10Produtos || []).filter(p => p.prodKg > 0);
+
+  // KPI: Motivo de parada mais frequente
+  const motivoMaisFrequente = (() => {
+    const contagem = {};
+    (dados?.motivosParada || []).forEach(({ descricao, total }) => {
+      if (descricao) contagem[descricao] = (contagem[descricao] || 0) + total;
+    });
+    const sorted = Object.entries(contagem).sort((a, b) => b[1] - a[1]);
+    return sorted.length > 0 ? { motivo: sorted[0][0], count: sorted[0][1] } : null;
+  })();
+
+  // Dados para gráfico de motivos
+  const topMotivosParada  = (dados?.motivosParada  || []).slice(0, 6);
+  const topMotivosRefugo  = (dados?.motivosRefugo  || []).slice(0, 6);
+  const topMotivosRetalho = (dados?.motivosRetalho || []).slice(0, 6);
+  const linhaMaisProblemas = dados?.linhaMaisProblemas || null;
+
   const tendDatas   = dados?.tendenciaRefugo?.map(r => r.data) || [];
-  const tendRefugo  = dados?.tendenciaRefugo?.map(r => Math.max(0, r.taxaRefugo  ?? 0)) || [];
-  const tendRetalho = dados?.tendenciaRefugo?.map(r => Math.max(0, r.taxaRetalho ?? 0)) || [];
+  const tendRefugo  = dados?.tendenciaRefugo?.map(r => r.taxaRefugo) || [];
+  const tendRetalho = dados?.tendenciaRefugo?.map(r => r.taxaRetalho) || [];
   const mediaRefugo = tendRefugo.length
     ? (tendRefugo.reduce((a, b) => a + b, 0) / tendRefugo.length).toFixed(2) : 0;
 
@@ -537,6 +543,20 @@ export default function Dashboard() {
                   alerta={dados?.tempoMedioParada > 2 ? "⚠ Acima de 2h" : null} />
                 <KpiCard titulo="Registros no Período" unidade="" cor={P.cinza}
                   valor={dados?.totalRegistros ?? 0} descricao="Formulários lançados" />
+                <KpiCard
+                  titulo="Parada Mais Frequente"
+                  valor={motivoMaisFrequente ? motivoMaisFrequente.motivo : "—"}
+                  unidade=""
+                  cor={P.amarelo}
+                  descricao={motivoMaisFrequente ? `${motivoMaisFrequente.count}x no período` : "Sem paradas registradas"}
+                />
+                <KpiCard
+                  titulo="Linha Mais Problemática"
+                  valor={linhaMaisProblemas ? linhaMaisProblemas.linha : "—"}
+                  unidade=""
+                  cor={P.vermelho}
+                  descricao={linhaMaisProblemas ? `${linhaMaisProblemas.totalParadas} paradas · ${fmt(linhaMaisProblemas.horasParadas)}h` : "Sem paradas registradas"}
+                />
 
                 {/* Card produtividade por funcionário */}
                 <div style={{ background: P.bgCard, border: `1px solid ${P.border}`, borderRadius: 16,
@@ -655,7 +675,7 @@ export default function Dashboard() {
                     height={260}
                     grid={{ horizontal: true }}
                     margin={{ left: 50, right: 20, top: 10, bottom: 40 }}
-                    slotProps={{ legend: { hidden: true } }}
+                    slotProps={{ legend: { itemMarkType: "line" } }}
                     sx={{
                       "& .MuiChartsAxis-line": { stroke: P.border },
                       "& .MuiChartsGrid-line": { stroke: P.border, opacity: 0.3 },
@@ -663,6 +683,87 @@ export default function Dashboard() {
                       "& .MuiAreaElement-series-1": { fill: `${P.amareloC}15` },
                     }}
                   />
+                </div>
+              </Secao>
+            )}
+
+            {/* ── Análise de Motivos ── */}
+            {(topMotivosParada.length > 0 || topMotivosRefugo.length > 0 || topMotivosRetalho.length > 0) && (
+              <Secao titulo="Análise de Motivos" sub="Top causas de paradas, refugos e retalhos no período">
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 20 }}>
+
+                  {/* Paradas */}
+                  {topMotivosParada.length > 0 && (
+                    <div style={{ background: P.bgCard, border: `1px solid ${P.border}`, borderRadius: 16, padding: "20px 20px" }}>
+                      <p style={{ fontSize: 12, fontWeight: 700, color: P.amareloC, textTransform: "uppercase", letterSpacing: 1, margin: "0 0 14px" }}>
+                        ⏱ Top Motivos de Parada
+                      </p>
+                      {topMotivosParada.map((m, i) => {
+                        const max = topMotivosParada[0].total;
+                        const pct = Math.round((m.total / max) * 100);
+                        return (
+                          <div key={i} style={{ marginBottom: 10 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                              <span style={{ fontSize: 12, color: P.text, fontWeight: 500, maxWidth: "75%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.descricao}</span>
+                              <span style={{ fontSize: 12, color: P.amareloC, fontWeight: 700 }}>{m.total}x</span>
+                            </div>
+                            <div style={{ height: 6, background: P.border, borderRadius: 4 }}>
+                              <div style={{ height: "100%", width: `${pct}%`, background: `linear-gradient(90deg, ${P.amarelo}, ${P.amareloC})`, borderRadius: 4, transition: "width 0.6s" }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Refugo */}
+                  {topMotivosRefugo.length > 0 && (
+                    <div style={{ background: P.bgCard, border: `1px solid ${P.border}`, borderRadius: 16, padding: "20px 20px" }}>
+                      <p style={{ fontSize: 12, fontWeight: 700, color: P.vermelhoC, textTransform: "uppercase", letterSpacing: 1, margin: "0 0 14px" }}>
+                        🗑 Top Motivos de Refugo
+                      </p>
+                      {topMotivosRefugo.map((m, i) => {
+                        const max = topMotivosRefugo[0].total;
+                        const pct = Math.round((m.total / max) * 100);
+                        return (
+                          <div key={i} style={{ marginBottom: 10 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                              <span style={{ fontSize: 12, color: P.text, fontWeight: 500, maxWidth: "75%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.descricao}</span>
+                              <span style={{ fontSize: 12, color: P.vermelhoC, fontWeight: 700 }}>{m.total}x</span>
+                            </div>
+                            <div style={{ height: 6, background: P.border, borderRadius: 4 }}>
+                              <div style={{ height: "100%", width: `${pct}%`, background: `linear-gradient(90deg, ${P.vermelho}, ${P.vermelhoC})`, borderRadius: 4, transition: "width 0.6s" }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Retalho */}
+                  {topMotivosRetalho.length > 0 && (
+                    <div style={{ background: P.bgCard, border: `1px solid ${P.border}`, borderRadius: 16, padding: "20px 20px" }}>
+                      <p style={{ fontSize: 12, fontWeight: 700, color: P.amareloC, textTransform: "uppercase", letterSpacing: 1, margin: "0 0 14px" }}>
+                        ✂ Top Motivos de Retalho
+                      </p>
+                      {topMotivosRetalho.map((m, i) => {
+                        const max = topMotivosRetalho[0].total;
+                        const pct = Math.round((m.total / max) * 100);
+                        return (
+                          <div key={i} style={{ marginBottom: 10 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                              <span style={{ fontSize: 12, color: P.text, fontWeight: 500, maxWidth: "75%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.descricao}</span>
+                              <span style={{ fontSize: 12, color: P.amareloC, fontWeight: 700 }}>{m.total}x</span>
+                            </div>
+                            <div style={{ height: 6, background: P.border, borderRadius: 4 }}>
+                              <div style={{ height: "100%", width: `${pct}%`, background: `linear-gradient(90deg, ${P.amarelo}, ${P.amareloC})`, borderRadius: 4, transition: "width 0.6s" }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
                 </div>
               </Secao>
             )}

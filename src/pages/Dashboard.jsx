@@ -1,8 +1,7 @@
 // src/pages/Dashboard.jsx
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
-import { BarChart } from "@mui/x-charts/BarChart";
-import { LineChart } from "@mui/x-charts/LineChart";
+import ReactECharts from "echarts-for-react";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import MuiTooltip from "@mui/material/Tooltip";
 import HoseBar from "../components/HoseBar";
@@ -102,7 +101,6 @@ function KpiCard({ titulo, valor, unidade, valorKg, descricao, cor, alerta, badg
         {descricao && !valorKg && <p style={{ fontSize: 11, color: P.textM, margin: "6px 0 0" }}>{descricao}</p>}
         {alerta && <p style={{ fontSize: 11, color: cor, margin: "6px 0 0", fontWeight: 600 }}>{alerta}</p>}
 
-        {/* Substitui a barra simples pela mangueira */}
         <HoseBar valor={valor} meta={meta} unidade={unidade} cor={cor} />
       </div>
     </MuiTooltip>
@@ -265,6 +263,7 @@ export default function Dashboard() {
   const [numFuncionarios, setNumFuncionarios] = useState(5);
   const [operadores, setOperadores] = useState([]);
   const [operadorSel, setOperadorSel] = useState("");
+  const [filtroProduto, setFiltroProduto] = useState(null);
 
   const hoje = new Date().toISOString().split("T")[0];
   const trintaDias = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
@@ -295,13 +294,15 @@ export default function Dashboard() {
       const params = { dataInicio, dataFim };
       if (setor) params.setor = setor;
       if (turno) params.turno = turno;
+      if (filtroProduto) params.produto = filtroProduto;
       const res = await axios.get(`${API_URL}/api/dashboard`, { params });
       if (res.data.success) setDados(res.data.data);
     } catch { setErro("Erro ao carregar dados."); }
     finally { setLoading(false); }
-  }, [dataInicio, dataFim, setor, turno]);
+  }, [dataInicio, dataFim, setor, turno, filtroProduto]);
 
   useEffect(() => { buscarMetas(); buscarDados(); }, []);
+  useEffect(() => { if (dados) buscarDados(); }, [filtroProduto]);
 
   const salvarMetas = async (novasMetas) => {
     try {
@@ -326,23 +327,6 @@ export default function Dashboard() {
   };
 
   const top10 = (dados?.top10Produtos || []).filter(p => p.prodKg > 0);
-
-  // KPI: Motivo de parada mais frequente
-  const motivoMaisFrequente = (() => {
-    const contagem = {};
-    (dados?.motivosParada || []).forEach(({ descricao, total }) => {
-      if (descricao) contagem[descricao] = (contagem[descricao] || 0) + total;
-    });
-    const sorted = Object.entries(contagem).sort((a, b) => b[1] - a[1]);
-    return sorted.length > 0 ? { motivo: sorted[0][0], count: sorted[0][1] } : null;
-  })();
-
-  // Dados para gráfico de motivos
-  const topMotivosParada  = (dados?.motivosParada  || []).slice(0, 6);
-  const topMotivosRefugo  = (dados?.motivosRefugo  || []).slice(0, 6);
-  const topMotivosRetalho = (dados?.motivosRetalho || []).slice(0, 6);
-  const linhaMaisProblemas = dados?.linhaMaisProblemas || null;
-
   const tendDatas   = dados?.tendenciaRefugo?.map(r => r.data) || [];
   const tendRefugo  = dados?.tendenciaRefugo?.map(r => r.taxaRefugo) || [];
   const tendRetalho = dados?.tendenciaRefugo?.map(r => r.taxaRetalho) || [];
@@ -351,9 +335,18 @@ export default function Dashboard() {
 
   const kpiTurno = null;
 
-  const producaoFiltrada = operadorSel && dados?.producaoPorOperador
-    ? (dados.producaoPorOperador.find(o => o.usuario === operadorSel)?.producao ?? dados?.producaoTotal ?? 0)
-    : dados?.producaoTotal ?? 0;
+  // KPIs filtrados por operador selecionado
+  const opData = operadorSel && dados?.producaoPorOperador
+    ? (dados.producaoPorOperador.find(o => o.usuario === operadorSel) || null)
+    : null;
+  const producaoFiltrada     = opData ? opData.producao    : (dados?.producaoTotal  ?? 0);
+  const refugoFiltrado       = opData ? opData.refugo      : (dados?.refugoTotal    ?? 0);
+  const retalhoFiltrado      = opData ? opData.retalho     : (dados?.retalhoTotal   ?? 0);
+  const taxaRefugoFiltrada   = opData ? opData.taxaRefugo  : (dados?.taxaRefugo     ?? 0);
+  const taxaRetalhoFiltrada  = opData ? opData.taxaRetalho : (dados?.taxaRetalho    ?? 0);
+  const eficienciaFiltrada   = opData ? opData.eficiencia  : (dados?.eficiencia     ?? 0);
+  const indicePerdasFiltrado = producaoFiltrada > 0
+    ? parseFloat(((refugoFiltrado + retalhoFiltrado) / producaoFiltrada * 100).toFixed(2)) : 0;
   const produtividadeFuncionario = numFuncionarios > 0
     ? parseFloat((producaoFiltrada / numFuncionarios).toFixed(2)) : 0;
 
@@ -509,32 +502,32 @@ export default function Dashboard() {
 
           <div ref={dashRef}>
             {/* ── KPIs ── */}
-            <Secao titulo="KPIs Principais" sub="Visão geral do período selecionado">
+            <Secao titulo="KPIs Principais" sub={filtroProduto ? `🔍 Filtrando por produto: ${filtroProduto} — clique ✕ no gráfico para limpar` : "Visão geral do período selecionado"}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 16 }}>
-                <KpiCard titulo="Produção Total" unidade="kg" cor={P.marcaC}
-                  valor={dados?.producaoTotal ?? 0}
-                  valorKg={dados?.producaoTotalM ?? 0}
-                  descricao="Volume total produzido" />
-                <KpiCard titulo="Taxa de Refugo" unidade="%"
-                  cor={corPerda(dados?.taxaRefugo || 0, metas.metaRefugo)}
-                  valor={dados?.taxaRefugo ?? 0} valorKg={dados?.refugoTotal}
+                <KpiCard titulo={opData ? `Produção — ${operadorSel}` : "Produção Total"} unidade="kg" cor={P.marcaC}
+                  valor={producaoFiltrada}
+                  valorKg={opData ? null : (dados?.producaoTotalM ?? 0)}
+                  descricao={opData ? `${opData.registros ?? "?"} registros` : "Volume total produzido"} />
+                <KpiCard titulo={opData ? `Taxa Refugo — ${operadorSel}` : "Taxa de Refugo"} unidade="%"
+                  cor={corPerda(taxaRefugoFiltrada, metas.metaRefugo)}
+                  valor={taxaRefugoFiltrada} valorKg={refugoFiltrado}
                   meta={metas.metaRefugo}
-                  alerta={metas.metaRefugo != null && dados?.taxaRefugo > metas.metaRefugo ? "⚠ Acima da meta" : metas.metaRefugo != null ? "✓ Dentro da meta" : null}
-                  badge={<Badge v={dados?.taxaRefugo||0} metas={metas} tipo="refugo" />} />
-                <KpiCard titulo="Taxa de Retalho" unidade="%"
-                  cor={corPerda(dados?.taxaRetalho || 0, metas.metaRetalho)}
-                  valor={dados?.taxaRetalho ?? 0} valorKg={dados?.retalhoTotal}
+                  alerta={metas.metaRefugo != null && taxaRefugoFiltrada > metas.metaRefugo ? "⚠ Acima da meta" : metas.metaRefugo != null ? "✓ Dentro da meta" : null}
+                  badge={<Badge v={taxaRefugoFiltrada} metas={metas} tipo="refugo" />} />
+                <KpiCard titulo={opData ? `Taxa Retalho — ${operadorSel}` : "Taxa de Retalho"} unidade="%"
+                  cor={corPerda(taxaRetalhoFiltrada, metas.metaRetalho)}
+                  valor={taxaRetalhoFiltrada} valorKg={retalhoFiltrado}
                   meta={metas.metaRetalho}
-                  badge={<Badge v={dados?.taxaRetalho||0} metas={metas} tipo="retalho" />} />
-                <KpiCard titulo="Índice de Perdas" unidade="%"
-                  cor={corPerda(dados?.indicePerdas || 0, metas.metaPerdas)}
-                  valor={dados?.indicePerdas ?? 0} meta={metas.metaPerdas}
-                  alerta={dados?.indicePerdas > metas.metaPerdas ? "⚠ Alto desperdício" : null}
-                  badge={<Badge v={dados?.indicePerdas||0} metas={metas} tipo="perdas" />} />
-                <KpiCard titulo="Eficiência" unidade="%"
-                  cor={corEfic(kpiTurno?.eficiencia || dados?.eficiencia || 0, metas.metaEficiencia)}
-                  valor={dados?.eficiencia ?? 0} meta={metas.metaEficiencia}
-                  badge={<Badge v={kpiTurno?.eficiencia||dados?.eficiencia||0} metas={metas} tipo="efic" />} />
+                  badge={<Badge v={taxaRetalhoFiltrada} metas={metas} tipo="retalho" />} />
+                <KpiCard titulo={opData ? `Índice Perdas — ${operadorSel}` : "Índice de Perdas"} unidade="%"
+                  cor={corPerda(indicePerdasFiltrado, metas.metaPerdas)}
+                  valor={indicePerdasFiltrado} meta={metas.metaPerdas}
+                  alerta={indicePerdasFiltrado > metas.metaPerdas ? "⚠ Alto desperdício" : null}
+                  badge={<Badge v={indicePerdasFiltrado} metas={metas} tipo="perdas" />} />
+                <KpiCard titulo={opData ? `Eficiência — ${operadorSel}` : "Eficiência"} unidade="%"
+                  cor={corEfic(eficienciaFiltrada, metas.metaEficiencia)}
+                  valor={eficienciaFiltrada} meta={metas.metaEficiencia}
+                  badge={<Badge v={eficienciaFiltrada} metas={metas} tipo="efic" />} />
                 <KpiCard titulo="Taxa de Produção" unidade="kg/h" cor={P.marcaL}
                   valor={dados?.taxaProducao ?? 0} descricao="Ritmo médio por hora" />
                 <KpiCard titulo="Tempo Médio de Parada" unidade="h"
@@ -543,101 +536,161 @@ export default function Dashboard() {
                   alerta={dados?.tempoMedioParada > 2 ? "⚠ Acima de 2h" : null} />
                 <KpiCard titulo="Registros no Período" unidade="" cor={P.cinza}
                   valor={dados?.totalRegistros ?? 0} descricao="Formulários lançados" />
-                <KpiCard
-                  titulo="Parada Mais Frequente"
-                  valor={motivoMaisFrequente ? motivoMaisFrequente.motivo : "—"}
-                  unidade=""
-                  cor={P.amarelo}
-                  descricao={motivoMaisFrequente ? `${motivoMaisFrequente.count}x no período` : "Sem paradas registradas"}
-                />
-                <KpiCard
-                  titulo="Linha Mais Problemática"
-                  valor={linhaMaisProblemas ? linhaMaisProblemas.linha : "—"}
-                  unidade=""
-                  cor={P.vermelho}
-                  descricao={linhaMaisProblemas ? `${linhaMaisProblemas.totalParadas} paradas · ${fmt(linhaMaisProblemas.horasParadas)}h` : "Sem paradas registradas"}
-                />
 
                 {/* Card produtividade por funcionário */}
+                {/* ── Card de Análise por Operador ── */}
                 <div style={{ background: P.bgCard, border: `1px solid ${P.border}`, borderRadius: 16,
                   padding: "20px 22px", position: "relative", overflow: "hidden",
-                  boxShadow: "0 2px 8px #00000030" }}>
+                  boxShadow: "0 2px 8px #00000030", gridColumn: "span 2" }}>
                   <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3,
-                    background: `linear-gradient(90deg, ${P.verdeC}, ${P.verdeC}80)`,
+                    background: `linear-gradient(90deg, ${P.verdeC}, ${P.marcaC})`,
                     borderRadius: "16px 16px 0 0" }} />
-                  <p style={{ fontSize: 11, fontWeight: 600, color: P.textM, textTransform: "uppercase",
-                    letterSpacing: 1, margin: "0 0 12px" }}>Produtividade por Funcionário</p>
 
-                  {operadores.length > 0 && (
-                    <div style={{ marginBottom: 10 }}>
-                      <label style={{ fontSize: 10, color: P.textM, display: "block", marginBottom: 4 }}>Operador</label>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+                    <p style={{ fontSize: 11, fontWeight: 700, color: P.textM, textTransform: "uppercase", letterSpacing: 1, margin: 0 }}>
+                      👷 Análise por Operador
+                    </p>
+                    {operadorSel && (
+                      <button onClick={() => setOperadorSel("")}
+                        style={{ fontSize: 11, color: P.textM, background: P.border, border: "none",
+                          borderRadius: 6, padding: "3px 10px", cursor: "pointer" }}>
+                        ✕ Limpar
+                      </button>
+                    )}
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                    {/* Seletor de operador */}
+                    <div>
+                      <label style={{ fontSize: 10, color: P.textM, display: "block", marginBottom: 4 }}>
+                        {setor ? "Operador" : "Selecione um setor primeiro"}
+                      </label>
                       <select value={operadorSel} onChange={e => setOperadorSel(e.target.value)}
+                        disabled={!setor || operadores.length === 0}
                         style={{ width: "100%", background: "#0b0f1e", border: `1px solid ${P.border}`,
-                          borderRadius: 6, padding: "5px 8px", color: P.text, fontSize: 12,
-                          outline: "none", colorScheme: "dark" }}>
-                        <option value="">Todos do setor</option>
+                          borderRadius: 6, padding: "6px 8px", color: setor ? P.text : P.textM,
+                          fontSize: 12, outline: "none", colorScheme: "dark", cursor: setor ? "pointer" : "not-allowed" }}>
+                        <option value="">— Todos do setor —</option>
                         {operadores.map(o => <option key={o.id} value={o.usuario}>{o.usuario}</option>)}
                       </select>
                     </div>
-                  )}
-                  {!setor && (
-                    <p style={{ fontSize: 11, color: P.textM, marginBottom: 10, fontStyle: "italic" }}>
-                      Selecione um setor para ver operadores
-                    </p>
-                  )}
 
-                  <div style={{ marginBottom: 12 }}>
-                    <label style={{ fontSize: 10, color: P.textM, display: "block", marginBottom: 4 }}>
-                      Nº de funcionários
-                    </label>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <button onClick={() => setNumFuncionarios(n => Math.max(1, n - 1))}
-                        style={{ background: P.border, border: "none", borderRadius: 6,
-                          width: 28, height: 28, color: P.text, cursor: "pointer",
-                          fontSize: 16, fontWeight: 700 }}>−</button>
-                      <span style={{ fontSize: 20, fontWeight: 800, color: P.text,
-                        fontFamily: "monospace", minWidth: 30, textAlign: "center" }}>
-                        {numFuncionarios}
-                      </span>
-                      <button onClick={() => setNumFuncionarios(n => n + 1)}
-                        style={{ background: P.border, border: "none", borderRadius: 6,
-                          width: 28, height: 28, color: P.text, cursor: "pointer",
-                          fontSize: 16, fontWeight: 700 }}>+</button>
+                    {/* Nº funcionários */}
+                    <div>
+                      <label style={{ fontSize: 10, color: P.textM, display: "block", marginBottom: 4 }}>Nº de funcionários</label>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <button onClick={() => setNumFuncionarios(n => Math.max(1, n - 1))}
+                          style={{ background: P.border, border: "none", borderRadius: 6,
+                            width: 32, height: 32, color: P.text, cursor: "pointer", fontSize: 18, fontWeight: 700 }}>−</button>
+                        <span style={{ fontSize: 22, fontWeight: 800, color: P.text, fontFamily: "monospace", minWidth: 36, textAlign: "center" }}>
+                          {numFuncionarios}
+                        </span>
+                        <button onClick={() => setNumFuncionarios(n => n + 1)}
+                          style={{ background: P.border, border: "none", borderRadius: 6,
+                            width: 32, height: 32, color: P.text, cursor: "pointer", fontSize: 18, fontWeight: 700 }}>+</button>
+                      </div>
                     </div>
                   </div>
 
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                    <p style={{ fontSize: 32, fontWeight: 800, color: P.verdeC, margin: 0, fontFamily: "monospace" }}>
-                      {fmt(produtividadeFuncionario)}
-                    </p>
-                    <span style={{ fontSize: 14, color: P.textM }}>kg/func</span>
+                  {/* KPIs do operador selecionado */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10 }}>
+                    {[
+                      { l: "Produção", v: `${fmt(producaoFiltrada)} kg`, c: P.marcaC },
+                      { l: "Refugo",   v: `${taxaRefugoFiltrada}%`,      c: corPerda(taxaRefugoFiltrada, metas.metaRefugo) },
+                      { l: "Retalho",  v: `${taxaRetalhoFiltrada}%`,     c: corPerda(taxaRetalhoFiltrada, metas.metaRetalho) },
+                      { l: "Eficiência",v: `${eficienciaFiltrada}%`,     c: corEfic(eficienciaFiltrada, metas.metaEficiencia) },
+                      { l: "kg/func",  v: `${fmt(produtividadeFuncionario)}`, c: P.verdeC },
+                    ].map(k => (
+                      <div key={k.l} style={{ background: "#0b0f1e", borderRadius: 10, padding: "10px 14px",
+                        border: `1px solid ${P.border}` }}>
+                        <p style={{ fontSize: 10, color: P.textM, textTransform: "uppercase",
+                          letterSpacing: 0.8, margin: "0 0 4px" }}>{k.l}</p>
+                        <p style={{ fontSize: 18, fontWeight: 800, color: k.c, margin: 0, fontFamily: "monospace" }}>{k.v}</p>
+                      </div>
+                    ))}
                   </div>
-                  <p style={{ fontSize: 11, color: P.textM, margin: "4px 0 0" }}>
-                    {fmt(producaoFiltrada)} kg ÷ {numFuncionarios} funcionários
-                  </p>
+
+                  {opData && (
+                    <p style={{ fontSize: 11, color: P.textM, marginTop: 12 }}>
+                      📋 {opData.registros ?? 0} registros · {fmt(producaoFiltrada)} kg ÷ {numFuncionarios} func = <b style={{ color: P.verdeC }}>{fmt(produtividadeFuncionario)} kg/func</b>
+                    </p>
+                  )}
+                  {!opData && (
+                    <p style={{ fontSize: 11, color: P.textM, marginTop: 12 }}>
+                      Selecione um operador para ver os KPIs individuais — ou veja os totais do setor acima.
+                    </p>
+                  )}
                 </div>
               </div>
             </Secao>
 
             {/* ── Top 10 Produtos ── */}
             {top10.length > 0 && (
-              <Secao titulo="Top 10 Produtos Fabricados" sub="Ranking por kg produzidos no período">
+              <Secao titulo="Top 10 Produtos Fabricados" sub="Clique em uma barra para filtrar todos os KPIs por produto">
                 <div style={{ background: P.bgCard, border: `1px solid ${P.border}`, borderRadius: 16, padding: "24px 20px" }}>
-                  <BarChart
-                    dataset={top10}
-                    series={[{ dataKey: "prodKg", label: "Produção (kg)",
-                      valueFormatter: v => `${fmt(v)} kg`, color: P.marcaC }]}
-                    layout="horizontal"
-                    height={Math.max(300, top10.length * 44)}
-                    xAxis={[{ tickLabelStyle: { fill: P.textM, fontSize: 11 }, label: "kg produzidos" }]}
-                    yAxis={[{ scaleType: "band", dataKey: "produto", width: 220,
-                      tickLabelStyle: { fill: P.text, fontSize: 12, fontWeight: 600 } }]}
-                    grid={{ vertical: true }}
-                    margin={{ left: 230, right: 40, top: 10, bottom: 50 }}
-                    sx={{
-                      "& .MuiChartsAxis-line": { stroke: P.border },
-                      "& .MuiChartsGrid-line": { stroke: P.border, opacity: 0.3 },
-                      "& .MuiChartsAxis-tickLabel": { fill: P.textM },
+                  {filtroProduto && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14,
+                      background: P.marcaC + "20", border: `1px solid ${P.marcaC}40`,
+                      borderRadius: 8, padding: "8px 14px" }}>
+                      <span style={{ fontSize: 12, color: P.marcaL }}>🔍 Filtrando por:</span>
+                      <span style={{ fontSize: 12, color: P.text, fontWeight: 600 }}>{filtroProduto}</span>
+                      <button onClick={() => setFiltroProduto(null)}
+                        style={{ marginLeft: "auto", background: "none", border: "none", color: P.textM, cursor: "pointer", fontSize: 16 }}>✕</button>
+                    </div>
+                  )}
+                  <ReactECharts
+                    style={{ height: Math.max(300, top10.length * 44) }}
+                    onEvents={{
+                      click: (params) => {
+                        if (params.componentType === "series") {
+                          const prod = top10[params.dataIndex]?.produto;
+                          setFiltroProduto(prev => prev === prod ? null : prod);
+                        }
+                      }
+                    }}
+                    option={{
+                      backgroundColor: "transparent",
+                      tooltip: {
+                        trigger: "axis", axisPointer: { type: "shadow" },
+                        formatter: (params) => {
+                          const p = params[0];
+                          return `<b>${p.name}</b><br/>Produção: <b>${p.value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} kg</b>`;
+                        },
+                        backgroundColor: P.bgCard, borderColor: P.border, textStyle: { color: P.text },
+                      },
+                      grid: { left: 230, right: 60, top: 10, bottom: 30, containLabel: false },
+                      xAxis: {
+                        type: "value",
+                        axisLabel: { color: P.textM, fontSize: 11 },
+                        axisLine: { lineStyle: { color: P.border } },
+                        splitLine: { lineStyle: { color: P.border, opacity: 0.3 } },
+                        name: "kg produzidos", nameLocation: "middle", nameGap: 28,
+                        nameTextStyle: { color: P.textM, fontSize: 11 },
+                      },
+                      yAxis: {
+                        type: "category",
+                        data: top10.map(p => p.produto),
+                        axisLabel: { color: P.text, fontSize: 12, fontWeight: "bold", width: 210, overflow: "truncate" },
+                        axisLine: { lineStyle: { color: P.border } },
+                      },
+                      series: [{
+                        type: "bar",
+                        data: top10.map(p => ({
+                          value: Math.max(0, p.prodKg ?? 0),
+                          itemStyle: {
+                            color: filtroProduto === p.produto
+                              ? { type: "linear", x: 0, y: 0, x2: 1, y2: 0,
+                                  colorStops: [{ offset: 0, color: P.verdeC }, { offset: 1, color: P.marcaC }] }
+                              : filtroProduto ? P.border
+                              : { type: "linear", x: 0, y: 0, x2: 1, y2: 0,
+                                  colorStops: [{ offset: 0, color: P.marcaC }, { offset: 1, color: P.marcaL }] },
+                            borderRadius: [0, 4, 4, 0],
+                          },
+                        })),
+                        label: { show: true, position: "right", formatter: p => `${(p.value/1000).toFixed(1)}t`, color: P.textM, fontSize: 11 },
+                        emphasis: { itemStyle: { opacity: 1 }, scaleSize: 4 },
+                        cursor: "pointer",
+                      }],
                     }}
                   />
                 </div>
@@ -665,105 +718,55 @@ export default function Dashboard() {
                       </div>
                     ))}
                   </div>
-                  <LineChart
-                    xAxis={[{ data: tendDatas, scaleType: "point", tickLabelStyle: { fill: P.textM, fontSize: 11 } }]}
-                    yAxis={[{ tickLabelStyle: { fill: P.textM, fontSize: 11 }, valueFormatter: v => `${v}%` }]}
-                    series={[
-                      { data: tendRefugo,  label: "Taxa Refugo (%)",  color: P.vermelhoC, area: true, curve: "monotoneX", valueFormatter: v => `${v}%` },
-                      { data: tendRetalho, label: "Taxa Retalho (%)", color: P.amareloC,  area: true, curve: "monotoneX", strokeDasharray: "5 3", valueFormatter: v => `${v}%` },
-                    ]}
-                    height={260}
-                    grid={{ horizontal: true }}
-                    margin={{ left: 50, right: 20, top: 10, bottom: 40 }}
-                    slotProps={{ legend: { itemMarkType: "line" } }}
-                    sx={{
-                      "& .MuiChartsAxis-line": { stroke: P.border },
-                      "& .MuiChartsGrid-line": { stroke: P.border, opacity: 0.3 },
-                      "& .MuiAreaElement-series-0": { fill: `${P.vermelhoC}20` },
-                      "& .MuiAreaElement-series-1": { fill: `${P.amareloC}15` },
+                  <ReactECharts
+                    style={{ height: 300 }}
+                    option={{
+                      backgroundColor: "transparent",
+                      tooltip: {
+                        trigger: "axis",
+                        formatter: (params) => {
+                          const data = params[0]?.axisValue || "";
+                          return params.reduce((acc, p) =>
+                            acc + `<span style="color:${p.color}">●</span> ${p.seriesName}: <b>${p.value}%</b><br/>`,
+                            `<b>${data}</b><br/>`);
+                        },
+                        backgroundColor: P.bgCard, borderColor: P.border, textStyle: { color: P.text },
+                      },
+                      legend: { data: ["Taxa Refugo (%)", "Taxa Retalho (%)"], textStyle: { color: P.textM }, bottom: 42 },
+                      dataZoom: [
+                        { type: "slider", bottom: 6, height: 22, borderColor: P.border,
+                          fillerColor: P.marcaC + "20", handleStyle: { color: P.marcaC },
+                          textStyle: { color: P.textM }, backgroundColor: P.bgCard,
+                          dataBackground: { lineStyle: { color: P.marcaC }, areaStyle: { color: P.marcaC + "20" } } },
+                        { type: "inside" },
+                      ],
+                      grid: { left: 50, right: 20, top: 10, bottom: 90 },
+                      xAxis: {
+                        type: "category", data: tendDatas,
+                        axisLabel: { color: P.textM, fontSize: 11 },
+                        axisLine: { lineStyle: { color: P.border } },
+                        splitLine: { show: false },
+                      },
+                      yAxis: {
+                        type: "value",
+                        axisLabel: { color: P.textM, fontSize: 11, formatter: v => `${v}%` },
+                        axisLine: { lineStyle: { color: P.border } },
+                        splitLine: { lineStyle: { color: P.border, opacity: 0.3 } },
+                      },
+                      series: [
+                        { name: "Taxa Refugo (%)", type: "line", data: tendRefugo, smooth: true,
+                          symbol: "circle", symbolSize: 6,
+                          lineStyle: { color: P.vermelhoC, width: 2 }, itemStyle: { color: P.vermelhoC },
+                          areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1,
+                            colorStops: [{ offset: 0, color: P.vermelhoC + "40" }, { offset: 1, color: P.vermelhoC + "05" }] } } },
+                        { name: "Taxa Retalho (%)", type: "line", data: tendRetalho, smooth: true,
+                          symbol: "circle", symbolSize: 6,
+                          lineStyle: { color: P.amareloC, width: 2, type: "dashed" }, itemStyle: { color: P.amareloC },
+                          areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1,
+                            colorStops: [{ offset: 0, color: P.amareloC + "30" }, { offset: 1, color: P.amareloC + "05" }] } } },
+                      ],
                     }}
                   />
-                </div>
-              </Secao>
-            )}
-
-            {/* ── Análise de Motivos ── */}
-            {(topMotivosParada.length > 0 || topMotivosRefugo.length > 0 || topMotivosRetalho.length > 0) && (
-              <Secao titulo="Análise de Motivos" sub="Top causas de paradas, refugos e retalhos no período">
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 20 }}>
-
-                  {/* Paradas */}
-                  {topMotivosParada.length > 0 && (
-                    <div style={{ background: P.bgCard, border: `1px solid ${P.border}`, borderRadius: 16, padding: "20px 20px" }}>
-                      <p style={{ fontSize: 12, fontWeight: 700, color: P.amareloC, textTransform: "uppercase", letterSpacing: 1, margin: "0 0 14px" }}>
-                        ⏱ Top Motivos de Parada
-                      </p>
-                      {topMotivosParada.map((m, i) => {
-                        const max = topMotivosParada[0].total;
-                        const pct = Math.round((m.total / max) * 100);
-                        return (
-                          <div key={i} style={{ marginBottom: 10 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                              <span style={{ fontSize: 12, color: P.text, fontWeight: 500, maxWidth: "75%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.descricao}</span>
-                              <span style={{ fontSize: 12, color: P.amareloC, fontWeight: 700 }}>{m.total}x</span>
-                            </div>
-                            <div style={{ height: 6, background: P.border, borderRadius: 4 }}>
-                              <div style={{ height: "100%", width: `${pct}%`, background: `linear-gradient(90deg, ${P.amarelo}, ${P.amareloC})`, borderRadius: 4, transition: "width 0.6s" }} />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Refugo */}
-                  {topMotivosRefugo.length > 0 && (
-                    <div style={{ background: P.bgCard, border: `1px solid ${P.border}`, borderRadius: 16, padding: "20px 20px" }}>
-                      <p style={{ fontSize: 12, fontWeight: 700, color: P.vermelhoC, textTransform: "uppercase", letterSpacing: 1, margin: "0 0 14px" }}>
-                        🗑 Top Motivos de Refugo
-                      </p>
-                      {topMotivosRefugo.map((m, i) => {
-                        const max = topMotivosRefugo[0].total;
-                        const pct = Math.round((m.total / max) * 100);
-                        return (
-                          <div key={i} style={{ marginBottom: 10 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                              <span style={{ fontSize: 12, color: P.text, fontWeight: 500, maxWidth: "75%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.descricao}</span>
-                              <span style={{ fontSize: 12, color: P.vermelhoC, fontWeight: 700 }}>{m.total}x</span>
-                            </div>
-                            <div style={{ height: 6, background: P.border, borderRadius: 4 }}>
-                              <div style={{ height: "100%", width: `${pct}%`, background: `linear-gradient(90deg, ${P.vermelho}, ${P.vermelhoC})`, borderRadius: 4, transition: "width 0.6s" }} />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Retalho */}
-                  {topMotivosRetalho.length > 0 && (
-                    <div style={{ background: P.bgCard, border: `1px solid ${P.border}`, borderRadius: 16, padding: "20px 20px" }}>
-                      <p style={{ fontSize: 12, fontWeight: 700, color: P.amareloC, textTransform: "uppercase", letterSpacing: 1, margin: "0 0 14px" }}>
-                        ✂ Top Motivos de Retalho
-                      </p>
-                      {topMotivosRetalho.map((m, i) => {
-                        const max = topMotivosRetalho[0].total;
-                        const pct = Math.round((m.total / max) * 100);
-                        return (
-                          <div key={i} style={{ marginBottom: 10 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                              <span style={{ fontSize: 12, color: P.text, fontWeight: 500, maxWidth: "75%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.descricao}</span>
-                              <span style={{ fontSize: 12, color: P.amareloC, fontWeight: 700 }}>{m.total}x</span>
-                            </div>
-                            <div style={{ height: 6, background: P.border, borderRadius: 4 }}>
-                              <div style={{ height: "100%", width: `${pct}%`, background: `linear-gradient(90deg, ${P.amarelo}, ${P.amareloC})`, borderRadius: 4, transition: "width 0.6s" }} />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
                 </div>
               </Secao>
             )}

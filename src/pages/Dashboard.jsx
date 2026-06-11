@@ -264,6 +264,7 @@ export default function Dashboard() {
   const [operadores, setOperadores] = useState([]);
   const [operadorSel, setOperadorSel] = useState("");
   const [filtroProduto, setFiltroProduto] = useState(null);
+  const [turnoCardSel, setTurnoCardSel] = useState(null);
 
   const hoje = new Date().toISOString().split("T")[0];
   const trintaDias = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
@@ -288,21 +289,23 @@ export default function Dashboard() {
     } catch {}
   };
 
-  const buscarDados = useCallback(async () => {
-    setLoading(true); setErro(null);
-    try {
-      const params = { dataInicio, dataFim };
-      if (setor) params.setor = setor;
-      if (turno) params.turno = turno;
-      if (filtroProduto) params.produto = filtroProduto;
-      const res = await axios.get(`${API_URL}/api/dashboard`, { params });
-      if (res.data.success) setDados(res.data.data);
-    } catch { setErro("Erro ao carregar dados."); }
-    finally { setLoading(false); }
-  }, [dataInicio, dataFim, setor, turno, filtroProduto]);
+ 
+const buscarDados = useCallback(async () => {
+  setLoading(true); setErro(null);
+  try {
+    const params = { dataInicio, dataFim };
+    if (setor)         params.setor    = setor;
+    if (turno)         params.turno    = turno;
+    if (filtroProduto) params.produto  = filtroProduto;
+    if (operadorSel)   params.usuario  = operadorSel; // ✅ ADICIONADO
+    const res = await axios.get(`${API_URL}/api/dashboard`, { params });
+    if (res.data.success) setDados(res.data.data);
+  } catch { setErro("Erro ao carregar dados."); }
+  finally { setLoading(false); }
+}, [dataInicio, dataFim, setor, turno, filtroProduto, operadorSel]); // ✅ adicionado
 
-  useEffect(() => { buscarMetas(); buscarDados(); }, []);
-  useEffect(() => { if (dados) buscarDados(); }, [filtroProduto]);
+useEffect(() => { buscarMetas(); }, []);          //
+useEffect(() => { buscarDados(); }, [buscarDados]); // 
 
   const salvarMetas = async (novasMetas) => {
     try {
@@ -349,6 +352,14 @@ export default function Dashboard() {
     ? parseFloat(((refugoFiltrado + retalhoFiltrado) / producaoFiltrada * 100).toFixed(2)) : 0;
   const produtividadeFuncionario = numFuncionarios > 0
     ? parseFloat((producaoFiltrada / numFuncionarios).toFixed(2)) : 0;
+    // KPIs do turno selecionado no card
+const turnoCardData = turnoCardSel
+  ? (dados?.eficienciaPorTurno?.find(t => t.turno === turnoCardSel) || null)
+  : null;
+
+const melhorTurno = dados?.eficienciaPorTurno?.length
+  ? [...dados.eficienciaPorTurno].sort((a, b) => b.eficiencia - a.eficiencia)[0]
+  : null;
 
   const inputSt = { background: P.bgCard, border: `1px solid ${P.border}`, borderRadius: 8,
     padding: "8px 12px", color: P.text, fontSize: 13, outline: "none", colorScheme: "dark" };
@@ -530,18 +541,231 @@ export default function Dashboard() {
                   badge={<Badge v={eficienciaFiltrada} metas={metas} tipo="efic" />} />
                 <KpiCard titulo="Taxa de Produção" unidade="kg/h" cor={P.marcaL}
                   valor={dados?.taxaProducao ?? 0} descricao="Ritmo médio por hora" />
-                <KpiCard titulo="Tempo Médio de Parada" unidade="h"
-                  cor={dados?.tempoMedioParada > 2 ? P.vermelhoC : P.cinza}
-                  valor={dados?.tempoMedioParada ?? 0}
-                  alerta={dados?.tempoMedioParada > 2 ? "⚠ Acima de 2h" : null} />
+                {/* ── Card Tempo Médio de Parada + Top 3 ── */}
+<div style={{
+  background: P.bgCard,
+  border: `1px solid ${(dados?.tempoMedioParada ?? 0) > 2 ? P.vermelhoC + "60" : P.border}`,
+  borderRadius: 16, padding: "20px 22px",
+  position: "relative", overflow: "hidden",
+  boxShadow: "0 2px 8px #00000040",
+}}>
+  {/* barra colorida no topo */}
+  <div style={{
+    position: "absolute", top: 0, left: 0, right: 0, height: 3,
+    background: `linear-gradient(90deg, ${(dados?.tempoMedioParada ?? 0) > 2 ? P.vermelhoC : P.cinza}, ${P.border})`,
+    borderRadius: "16px 16px 0 0",
+  }} />
+
+  <p style={{ fontSize: 11, fontWeight: 600, color: P.textM,
+    textTransform: "uppercase", letterSpacing: 1, margin: "0 0 6px" }}>
+    ⏱ Tempo Médio de Parada
+  </p>
+
+  <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 10 }}>
+    <span style={{ fontSize: 32, fontWeight: 800, color: P.text, fontFamily: "monospace" }}>
+      {fmt(dados?.tempoMedioParada ?? 0)}
+    </span>
+    <span style={{ fontSize: 14, color: P.textM }}>h / registro</span>
+  </div>
+
+  {(dados?.tempoMedioParada ?? 0) > 2 && (
+    <p style={{ fontSize: 11, color: P.vermelhoC, fontWeight: 600, margin: "0 0 8px" }}>
+      ⚠ Acima de 2h
+    </p>
+  )}
+
+  {/* Top 3 */}
+  {(dados?.top3Paradas?.length > 0) && (
+    <div style={{ borderTop: `1px solid ${P.border}`, paddingTop: 10, marginTop: 4 }}>
+      <p style={{ fontSize: 10, color: P.textM, textTransform: "uppercase",
+        letterSpacing: 0.8, margin: "0 0 8px", fontWeight: 600 }}>
+        Top 3 equipamentos parados
+      </p>
+      {dados.top3Paradas.map((m, i) => (
+        <div key={m.cod} style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          marginBottom: 6, gap: 8,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+            <span style={{
+              fontSize: 10, fontWeight: 800, color: i === 0 ? P.vermelhoC : i === 1 ? P.amareloC : P.textM,
+              minWidth: 16,
+            }}>
+              {i + 1}º
+            </span>
+            <span style={{
+              fontSize: 11, color: P.text, whiteSpace: "nowrap",
+              overflow: "hidden", textOverflow: "ellipsis", maxWidth: 120,
+            }}>
+              {m.desc}
+            </span>
+          </div>
+          <div style={{ textAlign: "right", flexShrink: 0 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: P.text, fontFamily: "monospace" }}>
+              {fmt(m.horas)}h
+            </span>
+            <span style={{ fontSize: 10, color: P.textM, marginLeft: 4 }}>
+              ({m.ocorrencias}×)
+            </span>
+          </div>
+        </div>
+      ))}
+    </div>
+  )}
+
+  {(!dados?.top3Paradas?.length) && (
+    <p style={{ fontSize: 11, color: P.textM, marginTop: 8 }}>
+      Nenhuma parada registrada no período.
+    </p>
+  )}
+</div>
+
+{/* ── Principal Motivo de Refugo ── */}
+<div style={{
+  background: P.bgCard,
+  border: `1px solid ${P.border}`,
+  borderRadius: 16, padding: "20px 22px",
+  position: "relative", overflow: "hidden",
+  boxShadow: "0 2px 8px #00000040",
+}}>
+  <div style={{
+    position: "absolute", top: 0, left: 0, right: 0, height: 3,
+    background: `linear-gradient(90deg, ${P.vermelhoC}, ${P.amareloC})`,
+    borderRadius: "16px 16px 0 0",
+  }} />
+  <p style={{ fontSize: 11, fontWeight: 600, color: P.textM,
+    textTransform: "uppercase", letterSpacing: 1, margin: "0 0 10px" }}>
+    ⚠ Principal Motivo de Refugo
+  </p>
+
+  {dados?.principalMotivoRefugo ? (
+    <>
+      <p style={{ fontSize: 18, fontWeight: 800, color: P.vermelhoC,
+        margin: "0 0 6px", lineHeight: 1.3 }}>
+        {dados.principalMotivoRefugo.motivo}
+      </p>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ background: "#0b0f1e", borderRadius: 8,
+          padding: "6px 12px", border: `1px solid ${P.border}` }}>
+          <p style={{ fontSize: 10, color: P.textM, margin: "0 0 2px",
+            textTransform: "uppercase", letterSpacing: 0.7 }}>Ocorrências</p>
+          <p style={{ fontSize: 18, fontWeight: 800, color: P.text,
+            margin: 0, fontFamily: "monospace" }}>
+            {dados.principalMotivoRefugo.ocorrencias}×
+          </p>
+        </div>
+        <div style={{ background: "#0b0f1e", borderRadius: 8,
+          padding: "6px 12px", border: `1px solid ${P.border}` }}>
+          <p style={{ fontSize: 10, color: P.textM, margin: "0 0 2px",
+            textTransform: "uppercase", letterSpacing: 0.7 }}>Refugo gerado</p>
+          <p style={{ fontSize: 18, fontWeight: 800, color: P.vermelhoC,
+            margin: 0, fontFamily: "monospace" }}>
+            {fmt(dados.principalMotivoRefugo.totalKg)} kg
+          </p>
+        </div>
+      </div>
+    </>
+  ) : (
+    <p style={{ fontSize: 13, color: P.textM }}>Nenhum refugo registrado no período.</p>
+  )}
+</div>
+
+{/* ── Turno Mais Eficiente ── */}
+<div style={{
+  background: P.bgCard,
+  border: `1px solid ${P.border}`,
+  borderRadius: 16, padding: "20px 22px",
+  position: "relative", overflow: "hidden",
+  boxShadow: "0 2px 8px #00000040",
+  gridColumn: "span 2",
+}}>
+  <div style={{
+    position: "absolute", top: 0, left: 0, right: 0, height: 3,
+    background: `linear-gradient(90deg, ${P.verdeC}, ${P.marcaC})`,
+    borderRadius: "16px 16px 0 0",
+  }} />
+
+  <div style={{ display: "flex", justifyContent: "space-between",
+    alignItems: "center", marginBottom: 12 }}>
+    <p style={{ fontSize: 11, fontWeight: 600, color: P.textM,
+      textTransform: "uppercase", letterSpacing: 1, margin: 0 }}>
+      🏆 Turnos
+    </p>
+    {turnoCardSel && (
+      <button onClick={() => setTurnoCardSel(null)}
+        style={{ fontSize: 11, color: P.textM, background: P.border,
+          border: "none", borderRadius: 6, padding: "3px 10px", cursor: "pointer" }}>
+        Limpar
+      </button>
+    )}
+  </div>
+
+  {/* Seletor de turno */}
+  <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+    {(dados?.eficienciaPorTurno || []).map(t => (
+      <button key={t.turno} onClick={() => setTurnoCardSel(prev => prev === t.turno ? null : t.turno)}
+        style={{
+          flex: 1, padding: "7px 4px", borderRadius: 8, cursor: "pointer",
+          fontSize: 12, fontWeight: 700,
+          border: `1px solid ${turnoCardSel === t.turno ? P.marcaC : P.border}`,
+          background: turnoCardSel === t.turno ? `${P.marcaC}25` : "#0b0f1e",
+          color: turnoCardSel === t.turno ? P.marcaL : P.textM,
+          transition: "all 0.15s",
+        }}>
+        {t.turno}
+      </button>
+    ))}
+  </div>
+
+  {/* KPIs do turno selecionado ou destaque do melhor */}
+  {turnoCardData ? (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+      {[
+        { l: "Produção", v: `${fmt(turnoCardData.producao)} kg`, c: P.marcaC },
+        { l: "Eficiência", v: `${turnoCardData.eficiencia}%`, c: corEfic(turnoCardData.eficiencia, metas.metaEficiencia) },
+        { l: "Refugo", v: `${turnoCardData.refugo} kg`, c: P.vermelhoC },
+        { l: "Registros", v: turnoCardData.registros, c: P.textM },
+      ].map(k => (
+        <div key={k.l} style={{ background: "#0b0f1e", borderRadius: 8,
+          padding: "8px 12px", border: `1px solid ${P.border}` }}>
+          <p style={{ fontSize: 10, color: P.textM, textTransform: "uppercase",
+            letterSpacing: 0.7, margin: "0 0 3px" }}>{k.l}</p>
+          <p style={{ fontSize: 16, fontWeight: 800, color: k.c,
+            margin: 0, fontFamily: "monospace" }}>{k.v}</p>
+        </div>
+      ))}
+    </div>
+  ) : (
+    <div>
+      {melhorTurno && (
+        <div style={{ background: `${P.verdeC}15`, border: `1px solid ${P.verdeC}40`,
+          borderRadius: 10, padding: "10px 14px", marginBottom: 10 }}>
+          <p style={{ fontSize: 10, color: P.verdeC, textTransform: "uppercase",
+            letterSpacing: 0.8, margin: "0 0 2px", fontWeight: 600 }}>
+            🏆 Mais eficiente
+          </p>
+          <p style={{ fontSize: 20, fontWeight: 800, color: P.verdeC,
+            margin: 0, fontFamily: "monospace" }}>
+            {melhorTurno.turno} — {melhorTurno.eficiencia}%
+          </p>
+        </div>
+      )}
+      <p style={{ fontSize: 11, color: P.textM, margin: 0 }}>
+        Selecione um turno para ver os detalhes.
+      </p>
+    </div>
+  )}
+</div>
+
                 <KpiCard titulo="Registros no Período" unidade="" cor={P.cinza}
                   valor={dados?.totalRegistros ?? 0} descricao="Formulários lançados" />
 
                 {/* Card produtividade por funcionário */}
                 {/* ── Card de Análise por Operador ── */}
+                
                 <div style={{ background: P.bgCard, border: `1px solid ${P.border}`, borderRadius: 16,
                   padding: "20px 22px", position: "relative", overflow: "hidden",
-                  boxShadow: "0 2px 8px #00000030", gridColumn: "span 2" }}>
+                  boxShadow: "0 2px 8px #00000030",  }}>
                   <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3,
                     background: `linear-gradient(90deg, ${P.verdeC}, ${P.marcaC})`,
                     borderRadius: "16px 16px 0 0" }} />
@@ -575,31 +799,12 @@ export default function Dashboard() {
                       </select>
                     </div>
 
-                    {/* Nº funcionários */}
-                    <div>
-                      <label style={{ fontSize: 10, color: P.textM, display: "block", marginBottom: 4 }}>Nº de funcionários</label>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <button onClick={() => setNumFuncionarios(n => Math.max(1, n - 1))}
-                          style={{ background: P.border, border: "none", borderRadius: 6,
-                            width: 32, height: 32, color: P.text, cursor: "pointer", fontSize: 18, fontWeight: 700 }}>−</button>
-                        <span style={{ fontSize: 22, fontWeight: 800, color: P.text, fontFamily: "monospace", minWidth: 36, textAlign: "center" }}>
-                          {numFuncionarios}
-                        </span>
-                        <button onClick={() => setNumFuncionarios(n => n + 1)}
-                          style={{ background: P.border, border: "none", borderRadius: 6,
-                            width: 32, height: 32, color: P.text, cursor: "pointer", fontSize: 18, fontWeight: 700 }}>+</button>
-                      </div>
-                    </div>
                   </div>
 
                   {/* KPIs do operador selecionado */}
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10 }}>
                     {[
-                      { l: "Produção", v: `${fmt(producaoFiltrada)} kg`, c: P.marcaC },
-                      { l: "Refugo",   v: `${taxaRefugoFiltrada}%`,      c: corPerda(taxaRefugoFiltrada, metas.metaRefugo) },
-                      { l: "Retalho",  v: `${taxaRetalhoFiltrada}%`,     c: corPerda(taxaRetalhoFiltrada, metas.metaRetalho) },
-                      { l: "Eficiência",v: `${eficienciaFiltrada}%`,     c: corEfic(eficienciaFiltrada, metas.metaEficiencia) },
-                      { l: "kg/func",  v: `${fmt(produtividadeFuncionario)}`, c: P.verdeC },
+                      
                     ].map(k => (
                       <div key={k.l} style={{ background: "#0b0f1e", borderRadius: 10, padding: "10px 14px",
                         border: `1px solid ${P.border}` }}>
